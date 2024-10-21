@@ -1,11 +1,10 @@
 # models.py
 
-import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
 from sklearn.feature_extraction.text import CountVectorizer
-from sentiment_data import read_sentiment_examples, WordEmbeddings, read_word_embeddings
+from sentiment_data import read_sentiment_examples, WordEmbeddings, read_word_embeddings, RandomWordEmbeddings
 from torch.utils.data import Dataset, DataLoader
 import time
 import argparse
@@ -13,6 +12,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from BOWmodels import SentimentDatasetBOW, NN2BOW, NN3BOW
 from DANmodels import DAN, SentimentDatasetDAN
+from BPE import BPE, read_sentiment_examples_BPE, SentimentDatasetBPE, DAN_BPE
 from utils import Indexer
 
 
@@ -35,12 +35,6 @@ def train_epoch(data_loader, model, loss_fn, optimizer):
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
-        
-        # Check gradient norms for each parameter
-        # for name, param in model.named_parameters():
-        #     if param.grad is not None:
-        #         print(f"Gradient norm for {name}: {param.grad.norm().item()}")
-                
         optimizer.step()
 
     average_train_loss = train_loss / num_batches
@@ -72,8 +66,7 @@ def eval_epoch(data_loader, model, loss_fn, optimizer):
 # Experiment function to run training and evaluation for multiple epochs
 def experiment(model, train_loader, test_loader):
     loss_fn = nn.NLLLoss()
-    # optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
     all_train_accuracy = []
     all_test_accuracy = []
@@ -163,70 +156,59 @@ def main():
     
         start_time = time.time()
         
-        # Assume you have a GloVe embedding file and you've built an indexer
-        word_indexer = Indexer()
-        word_indexer.add_and_get_index("PAD")  # Add PAD token
-        word_indexer.add_and_get_index("UNK")  # Add UNK token
-
         # Load GloVe embeddings
-        glove_file = "data/glove.6B.300d-relativized.txt"
+        # 1a with pre-trained embeddings
+        print("Loading GloVe embeddings...")
+        glove_file = "data/glove.6B.50d-relativized.txt" # 50 or 300
 
         # Create the WordEmbeddings object by loading the embeddings from the file
         word_embeddings = read_word_embeddings(glove_file)
         print(f"Vocabulary size: {len(word_embeddings.word_indexer)}")
+
+        # Create the dataset and dataloader using the word indexer from word_embeddings
+        train_dataset = SentimentDatasetDAN("data/train.txt", word_embeddings)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True)
+        test_dataset = SentimentDatasetDAN("data/dev.txt", word_embeddings)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False)
+
+        # Train and evaluate the DAN model using GloVe embeddings
+        dan_train_accuracy, dan_test_accuracy = experiment(DAN(word_embeddings, hidden_dim=512, output_dim=2, frozen=False), train_loader, test_loader)
         
-        # Simulate loading a small subset of the GloVe file manually for testing
-        glove_vocab = {
-            "the": 2,
-            ".": 3,
-            ",": 4
-        }
-        # Add these words to the indexer to simulate the GloVe embeddings being loaded
-        for word, idx in glove_vocab.items():
-            word_indexer.add_and_get_index(word)
+        # 1b with random embeddings
+        # Train and evaluate the DAN model using random embeddings
+        print("Training DAN model with random embeddings...")
+        word_indexer = Indexer()
+        word_indexer.add_and_get_index("PAD")  # Index 0 for PAD token
+        word_indexer.add_and_get_index("UNK")  # Index 1 for UNK token
 
-        # Example sentence: "the bruehsbayreuyhr . , the"
-        sentence = "the bruehsbayreuyhr . , the"
-        words = sentence.split()
+        # Function to add words from the dataset to the indexer
+        def add_words_to_indexer(sentences, word_indexer):
+            for sentence in sentences:
+                words = sentence.split()  # Split sentence into words
+                for word in words:
+                    word_indexer.add_and_get_index(word)  # Add word to the indexer if not already added
 
-        # Translate the sentence into indices using the word indexer
-        sentence_indices = [word_indexer.index_of(word) for word in words]
+        # Load the dataset (this function should return a list of examples where each example has a sentence)
+        train_sentences = [ex.words for ex in read_sentiment_examples("data/train.txt")]
+        test_sentences = [ex.words for ex in read_sentiment_examples("data/dev.txt")]
 
-        # Expected output: [2, 1, 3, 4, 2]
-        print("Sentence:", sentence)
-        print("Word indices:", sentence_indices)
+        # Combine train and test sentences to ensure all words are added to the indexer
+        all_sentences = train_sentences + test_sentences
 
-        # Verify the embeddings for PAD, UNK, "the", ".", and ","
-        print("PAD index:", word_indexer.index_of("PAD"))  # Should print 0
-        print("UNK index:", word_indexer.index_of("UNK"))  # Should print 1
-        print("Index of 'the':", word_indexer.index_of("the"))  # Should print 2
-        print("Index of '.':", word_indexer.index_of("."))  # Should print 3
-        print("Index of ',':", word_indexer.index_of(","))  # Should print 4
+        # Add all words from the combined dataset to the word indexer
+        add_words_to_indexer([" ".join(sentence) for sentence in all_sentences], word_indexer)
 
-        # Create the dataset and dataloader for training
-        train_dataset = SentimentDatasetDAN("data/train.txt", word_indexer)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=8, shuffle=True)
-        test_dataset = SentimentDatasetDAN("data/dev.txt", word_indexer)
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=8, shuffle=False)
-
-        # Now train_loader can be used to train your DAN model
-        for batch_idx, (X, y) in enumerate(train_loader):
-            print(f"Batch {batch_idx}:")
-            print(f"Input (X) shape: {X.shape}")  # Should be (batch_size, max_seq_len)
-            print(f"Labels (y) shape: {y.shape}")  # Should be (batch_size,)
-            break
-
-        # Initialize the DAN model using the loaded embeddings
-        # dan_model = DAN(word_embeddings, hidden_dim=128, output_dim=2, frozen=True)
-        # print(dan_model)
-
-        # Train and evaluate the DAN model
-        dan_train_accuracy, dan_test_accuracy = experiment(DAN(word_embeddings, hidden_dim=512, output_dim=2, frozen=False), 
-                                                           train_loader, test_loader)
+        # Check the size of the vocabulary
+        embedding_dim = 50
+        random_word_embeddings = RandomWordEmbeddings(word_indexer, embedding_dim)
+        
+        rand_train_accuracy, rand_test_accuracy = experiment(DAN(random_word_embeddings, hidden_dim=512, output_dim=2, frozen=False), 
+                                                             train_loader, test_loader)
 
         # Plot the training accuracy
         plt.figure(figsize=(8, 6))
-        plt.plot(dan_train_accuracy, label='DAN')
+        plt.plot(dan_train_accuracy, label='DAN with GloVe embeddings (50D)')
+        plt.plot(rand_train_accuracy, label='DAN with random embeddings (50D)')
         plt.xlabel('Epochs')
         plt.ylabel('Training Accuracy')
         plt.title('Training Accuracy for DAN')
@@ -234,13 +216,14 @@ def main():
         plt.grid()
 
         # Save the training accuracy figure
-        training_accuracy_file = 'dan_train_accuracy.png'
+        training_accuracy_file = 'dan_train_accuracy_50d.png'
         plt.savefig(training_accuracy_file)
         print(f"\n\nTraining accuracy plot saved as {training_accuracy_file}")
 
         # Plot the testing accuracy
         plt.figure(figsize=(8, 6))
-        plt.plot(dan_test_accuracy, label='DAN')
+        plt.plot(dan_test_accuracy, label='DAN with GloVe embeddings (50D)')
+        plt.plot(rand_test_accuracy, label='DAN with random embeddings (50D)')
         plt.xlabel('Epochs')
         plt.ylabel('Dev Accuracy')
         plt.title('Dev Accuracy for DAN')
@@ -248,9 +231,62 @@ def main():
         plt.grid()
 
         # Save the testing accuracy figure
-        testing_accuracy_file = 'dan_dev_accuracy.png'
+        testing_accuracy_file = 'dan_dev_accuracy_50d.png'
         plt.savefig(testing_accuracy_file)
         print(f"Dev accuracy plot saved as {testing_accuracy_file}\n\n")
+        
+    elif args.model == "BPE":
+        # part 2
+        # Read the training data and split sentences
+        train_sentences, train_labels = read_sentiment_examples_BPE("data/train.txt")
+        # Lowercase the corpus before training BPE
+        train_sentences = [sentence.lower() for sentence in train_sentences]
+
+        # Check if train_sentences is a list
+        print(f"Type of train_sentences: {type(train_sentences)}")  # Should output: <class 'list'>
+
+        # Check the first few elements in the list to ensure they are strings (sentences)
+        print("First 5 sentences from train_sentences:")
+        for i, sentence in enumerate(train_sentences[:5]):
+            print(f"Sentence {i+1}: {sentence}")
+        
+        # Initialize and train the BPE model
+        bpe_model = BPE(vocab_size=500)  # Set the desired subword vocabulary size
+        print("Training BPE model...")
+        bpe_model.train(train_sentences)
+        print(f"merging rules: {bpe_model.bpe_codes}")
+        
+        print(f"BPE Vocabulary Size: {len(bpe_model.vocab)}")
+        # Display the final subword vocabulary
+        # bpe_model.display_final_vocab()
+        
+        # Save the final subword vocabulary to a file
+        bpe_model.save_final_vocab_to_file("final_subword_vocab.txt")
+        
+        word = "cat"
+        encoded_tokens = bpe_model.encode(word)
+        print(f"Encoded tokens for '{word}': {encoded_tokens}")
+
+        # Create dataset and dataloader
+        train_dataset = SentimentDatasetBPE("data/train.txt", bpe_model)  # Use the updated dataset class
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True)
+        
+        test_dataset = SentimentDatasetBPE("data/dev.txt", bpe_model)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False)
+
+        # Initialize the DAN_BPE model with the appropriate parameters
+        vocab_size = len(bpe_model.vocab)  # Get the size of the learned BPE vocabulary
+        embedding_dim = 50  # Example embedding dimension
+        hidden_dim = 512  # Example hidden layer size
+        output_dim = 2  # Binary classification (positive or negative sentiment)
+
+        # Initialize the DAN_BPE model
+        dan_model = DAN_BPE(vocab_size=vocab_size, embedding_dim=embedding_dim, hidden_dim=hidden_dim, output_dim=output_dim)
+        
+        # Train and evaluate the DAN model
+        print("Training DAN model with BPE...")
+        dan_train_accuracy, dan_test_accuracy = experiment(dan_model, train_loader, test_loader)
+
 
 if __name__ == "__main__":
     main()

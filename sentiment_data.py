@@ -117,6 +117,30 @@ class WordEmbeddings:
             return self.vectors[self.word_indexer.index_of("UNK")]
 
 
+# added code for random embeddings
+class RandomWordEmbeddings:
+    """
+    Wraps an Indexer and initializes random embeddings for each word in the indexer.
+    """
+    def __init__(self, word_indexer, embedding_dim):
+        self.word_indexer = word_indexer
+        self.embedding_dim = embedding_dim
+
+        # Initialize random embeddings for each word in the indexer
+        vocab_size = len(word_indexer)
+        self.vectors = np.random.uniform(-0.1, 0.1, (vocab_size, embedding_dim))  # Random embedding matrix
+
+    def get_initialized_embedding_layer(self, frozen=True):
+        """
+        :param frozen: True if you want the embedding layer to stay frozen, false to fine-tune embeddings
+        :return: torch.nn.Embedding layer you can use in your network
+        """
+        return torch.nn.Embedding.from_pretrained(torch.FloatTensor(self.vectors), freeze=frozen)
+
+    def get_embedding_length(self):
+        return self.embedding_dim
+    
+
 def read_word_embeddings(embeddings_file: str) -> WordEmbeddings:
     """
     Loads the given embeddings (ASCII-formatted) into a WordEmbeddings object. Augments this with an UNK embedding
