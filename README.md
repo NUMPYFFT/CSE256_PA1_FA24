@@ -4,13 +4,9 @@ This repository contains the implementation of the Deep Averaging Network (DAN) 
 
 ## File Structure
 
-- **DANmodels.py**  
-  This file contains the implementation of the Deep Averaging Network (DAN) used in part 1a and part 1b.
-
-- **BPE.py**  
-  This file contains the Byte Pair Encoding (BPE) algorithm used for question 2.
-
-- **main.py**  
+- **DANmodels.py**This file contains the implementation of the Deep Averaging Network (DAN) used in part 1a and part 1b.
+- **BPE.py**This file contains the Byte Pair Encoding (BPE) algorithm used for question 2.
+- **main.py**
   The main script that runs both the DAN models and BPE encoding based on the input arguments.
 
 ## Usage
@@ -22,7 +18,7 @@ You can run different parts of the project using the following commands.
 To run the DAN model for part 1a and 1b, use the following command:
 
 ```bash
-python main.py model DAN
+python main.py --model DAN
 ```
 
 ### Question 2: Byte Pair Encoding (BPE)
@@ -30,6 +26,5 @@ python main.py model DAN
 To run the BPE encoding for question 2, use the following command:
 
 ```bash
-python main.py model BPE
+python main.py --model BPE
 ```
-
